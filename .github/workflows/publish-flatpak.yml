@@ -1,0 +1,242 @@
+name: Publish Flatpak Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Optional vscode-v* release tag. Uses the newest Flatpak release when empty.
+        required: false
+        type: string
+        default: ''
+      allow_policy_override:
+        description: Allow initial/recovery publish or an explicit-tag rollback.
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: flatpak-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish stable Flatpak repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GNUPGHOME: /tmp/miragon-flatpak-gnupg
+      MAX_BUNDLE_SIZE_BYTES: '450000000'
+      SOURCE_REPOSITORY: Miragon/bpmn-modeler
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Install Flatpak repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak jq ostree
+
+      - name: Resolve source release
+        id: release
+        env:
+          ALLOW_POLICY_OVERRIDE: ${{ inputs.allow_policy_override }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          if [ ! -f config/signing-key.fingerprint ]; then
+            echo "Create and commit config/signing-key.fingerprint first." >&2
+            exit 1
+          fi
+          EXPECTED_FINGERPRINT=$(tr -d '[:space:]' < config/signing-key.fingerprint)
+          if ! [[ "$EXPECTED_FINGERPRINT" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "config/signing-key.fingerprint must contain the full fingerprint." >&2
+            exit 1
+          fi
+
+          set +e
+          ./scripts/resolve-release.sh "$REQUESTED_TAG" > release.json
+          status=$?
+          set -e
+
+          if [ "$status" -eq 3 ]; then
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "No publishable Flatpak release found." >&2
+              exit 1
+            fi
+            {
+              echo "found=false"
+              echo "publish=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+
+          {
+            echo "found=true"
+            echo "tag=$(jq -r '.tag' release.json)"
+            echo "asset_name=$(jq -r '.asset_name' release.json)"
+          } >> "$GITHUB_OUTPUT"
+
+          publish=true
+          current_release="$RUNNER_TEMP/current-release.json"
+          if curl --fail --silent --show-error --location --retry 2 \
+            --connect-timeout 15 --max-time 60 \
+            --output "$current_release" \
+            "${{ steps.pages.outputs.base_url }}/release.json"; then
+            if [ "$ALLOW_POLICY_OVERRIDE" = "true" ]; then
+              if [ -z "$REQUESTED_TAG" ]; then
+                echo "An override against an existing repository requires an explicit tag." >&2
+                exit 1
+              fi
+              echo "Policy override accepted for explicit tag $REQUESTED_TAG."
+            fi
+            publisher_revision=$(./scripts/publisher-revision.sh "$EXPECTED_FINGERPRINT")
+            decision=$(./scripts/check-publication-policy.sh \
+              release.json "$current_release" "$publisher_revision" \
+              "${{ steps.pages.outputs.base_url }}/repo/" \
+              "$EXPECTED_FINGERPRINT" "$ALLOW_POLICY_OVERRIDE")
+            if [ "$decision" = "skip" ]; then
+              publish=false
+              echo "The current release and publisher revision are already deployed."
+            fi
+          else
+            if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] || \
+               [ "$ALLOW_POLICY_OVERRIDE" != "true" ]; then
+              echo "Current release metadata is unavailable." >&2
+              echo "Initial or recovery publication requires a manual policy override." >&2
+              exit 1
+            fi
+            echo "Policy override accepted for initial or recovery publication."
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Download release bundle
+        id: bundle
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          asset_url=$(jq -r '.asset_url' release.json)
+          asset_name=$(jq -r '.asset_name' release.json)
+          expected_size=$(jq -er '.asset_size | numbers' release.json)
+          if ! [[ "$expected_size" =~ ^[0-9]+$ ]] || \
+             [ "$expected_size" -le 0 ] || \
+             [ "$expected_size" -gt "$MAX_BUNDLE_SIZE_BYTES" ]; then
+            echo "Asset size $expected_size is outside the allowed range." >&2
+            exit 1
+          fi
+          bundle_path="$RUNNER_TEMP/$asset_name"
+          curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 15 --max-time 900 --speed-limit 1024 --speed-time 60 \
+            --max-filesize "$MAX_BUNDLE_SIZE_BYTES" \
+            --output "$bundle_path" "$asset_url"
+          actual_size=$(stat -c %s "$bundle_path")
+          if [ "$actual_size" != "$expected_size" ]; then
+            echo "Downloaded size $actual_size does not match GitHub size $expected_size." >&2
+            exit 1
+          fi
+          echo "path=$bundle_path" >> "$GITHUB_OUTPUT"
+
+      - name: Import repository signing key
+        id: signing
+        if: steps.release.outputs.publish == 'true'
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ] || [ -z "$FLATPAK_GPG_PASSPHRASE" ]; then
+            echo "FLATPAK_GPG_PRIVATE_KEY and FLATPAK_GPG_PASSPHRASE must be configured." >&2
+            exit 1
+          fi
+          EXPECTED_FINGERPRINT=$(tr -d '[:space:]' < config/signing-key.fingerprint)
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          printf '%s\n' 'allow-preset-passphrase' > "$GNUPGHOME/gpg-agent.conf"
+          gpgconf --kill gpg-agent || true
+
+          private_key_file="$RUNNER_TEMP/miragon-flatpak-private.asc"
+          trap 'rm -f "$private_key_file"' EXIT
+          printf '%s' "$FLATPAK_GPG_PRIVATE_KEY" > "$private_key_file"
+          chmod 600 "$private_key_file"
+          gpg --batch --import "$private_key_file"
+          rm -f "$private_key_file"
+
+          secret_fingerprint=$(gpg --batch --with-colons --fingerprint \
+            | awk -F: '$1 == "fpr" { print $10; exit }')
+
+          if [ "${EXPECTED_FINGERPRINT^^}" != "$secret_fingerprint" ]; then
+            echo "Private signing key does not match config/signing-key.fingerprint." >&2
+            exit 1
+          fi
+
+          public_key_file="$RUNNER_TEMP/miragon-flatpak-public.asc"
+          gpg --batch --armor --export "$secret_fingerprint" > "$public_key_file"
+
+          keygrip=$(gpg --batch --with-colons --with-keygrip \
+            --list-secret-keys "$secret_fingerprint" \
+            | awk -F: '$1 == "grp" { print $10; exit }')
+          preset_tool=$(command -v gpg-preset-passphrase || true)
+          for candidate in \
+            /usr/lib/gnupg/gpg-preset-passphrase \
+            /usr/lib/gnupg2/gpg-preset-passphrase \
+            /usr/libexec/gpg-preset-passphrase; do
+            if [ -z "$preset_tool" ] && [ -x "$candidate" ]; then
+              preset_tool="$candidate"
+            fi
+          done
+          if [ -z "$keygrip" ] || [ -z "$preset_tool" ]; then
+            echo "Could not prepare unattended GPG signing." >&2
+            exit 1
+          fi
+          gpg-connect-agent /bye >/dev/null
+          printf '%s' "$FLATPAK_GPG_PASSPHRASE" \
+            | "$preset_tool" --preset "$keygrip"
+
+          {
+            echo "fingerprint=$secret_fingerprint"
+            echo "public_key=$public_key_file"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify repository
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          ./scripts/publish-release.sh \
+            --release-json release.json \
+            --bundle "${{ steps.bundle.outputs.path }}" \
+            --public-key "${{ steps.signing.outputs.public_key }}" \
+            --gpg-key-id "${{ steps.signing.outputs.fingerprint }}" \
+            --site-dir site \
+            --base-url "${{ steps.pages.outputs.base_url }}"
+
+      - name: Remove repository signing key
+        if: always() && steps.release.outputs.publish == 'true'
+        run: |
+          gpgconf --kill gpg-agent || true
+          rm -rf "$GNUPGHOME"
+          rm -f "${{ steps.signing.outputs.public_key }}"
+
+      - name: Upload GitHub Pages artifact
+        if: steps.release.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - name: Deploy GitHub Pages
+        if: steps.release.outputs.publish == 'true'
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

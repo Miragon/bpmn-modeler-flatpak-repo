@@ -1,0 +1,9 @@
+*.flatpak
+__pycache__/
+/release.json
+/site/
+
+.idea
+.vscode
+
+/keys/

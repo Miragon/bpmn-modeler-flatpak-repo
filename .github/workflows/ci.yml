@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint scripts and workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check source syntax
+        run: |
+          bash -n scripts/*.sh tests/*.sh
+          python3 -m py_compile scripts/*.py
+
+      - name: Validate pinned signing fingerprint
+        run: |
+          if [ ! -f config/signing-key.fingerprint ]; then
+            echo "Run the signing-key setup in docs/README.md first." >&2
+            exit 1
+          fi
+          fingerprint=$(tr -d '[:space:]' < config/signing-key.fingerprint)
+          if ! [[ "$fingerprint" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "config/signing-key.fingerprint is invalid." >&2
+            exit 1
+          fi
+
+      - name: Run ShellCheck
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            --workdir /repo \
+            koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            scripts/*.sh tests/*.sh
+
+      - name: Run actionlint
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            --workdir /repo \
+            rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+
+  test:
+    name: Test Flatpak publication and updates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Flatpak tools and runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak jq ostree
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08
+
+      - name: Test release selection
+        run: |
+          ./tests/select-release-test.sh
+          ./tests/publication-policy-test.sh
+          ./tests/publisher-revision-test.sh
+          ./tests/flatpak-metadata-test.sh
+
+      - name: Test publication and update
+        run: ./tests/publish-release-test.sh
