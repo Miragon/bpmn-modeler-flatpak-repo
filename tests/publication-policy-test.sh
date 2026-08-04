@@ -5,8 +5,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 readonly POLICY="$REPO_ROOT/scripts/check-publication-policy.sh"
+readonly PUBLISH_WORKFLOW="$REPO_ROOT/.github/workflows/publish-flatpak.yml"
 readonly KEY_A="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 readonly KEY_B="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+
+if ! grep -Fq "ALLOW_POLICY_OVERRIDE: \${{ inputs.allow_policy_override || false }}" \
+    "$PUBLISH_WORKFLOW"; then
+    echo "Scheduled publication must default allow_policy_override to false." >&2
+    exit 1
+fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT

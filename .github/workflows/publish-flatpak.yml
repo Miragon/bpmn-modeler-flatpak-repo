@@ -54,7 +54,7 @@ jobs:
       - name: Resolve source release
         id: release
         env:
-          ALLOW_POLICY_OVERRIDE: ${{ inputs.allow_policy_override }}
+          ALLOW_POLICY_OVERRIDE: ${{ inputs.allow_policy_override || false }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REQUESTED_TAG: ${{ inputs.tag }}
         run: |
