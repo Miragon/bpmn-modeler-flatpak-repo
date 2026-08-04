@@ -37,14 +37,6 @@ mkdir -p "$GNUPGHOME"
 chmod 700 "$MIRAGON_FLATPAK_KEY_DIR" "$GNUPGHOME"
 ```
 
-Confirm that Git ignores the directory:
-
-```bash
-git check-ignore -v keys/
-```
-
-The command must show the `/keys/` rule from `.gitignore`. Stop if it does not.
-
 ## 2. Generate the Signing Key
 
 Create a dedicated 4096-bit RSA signing key without an expiration date:

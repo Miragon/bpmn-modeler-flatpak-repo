@@ -17,33 +17,37 @@ attestations.
 
 ## Install
 
-After the GitHub Pages site has been published, install the application with:
+Install the bpmn modeler in the user space with:
 
 ```bash
-flatpak install --user \
-  https://miragon.github.io/bpmn-modeler-flatpak-repo/io.miragon.BpmnModeler.flatpakref
-```
+flatpak remote-add --user --if-not-exists miragon https://miragon.github.io/bpmn-modeler-flatpak-repo/miragon.flatpakrepo
 
-Run and update it with:
-
-```bash
-flatpak run io.miragon.BpmnModeler
-flatpak update --user io.miragon.BpmnModeler
-```
-
-Alternatively, add the remote explicitly:
-
-```bash
-flatpak remote-add --user --if-not-exists miragon \
-  https://miragon.github.io/bpmn-modeler-flatpak-repo/miragon.flatpakrepo
 flatpak install --user miragon io.miragon.BpmnModeler
 ```
 
-## Initial setup
+Alternatively, install the bpmn modeler globally with:
 
-Follow the step-by-step guide in [`docs/README.md`](docs/README.md) to generate
-the signing key manually, configure GitHub Pages and Actions secrets, and run
-the initial publication.
+```bash
+sudo flatpak remote-add --user --if-not-exists miragon https://miragon.github.io/bpmn-modeler-flatpak-repo/miragon.flatpakrepo
+
+sudo flatpak install --user miragon io.miragon.BpmnModeler
+```
+
+## Run
+
+Run the bpmn modeler with:
+
+```bash
+flatpak run io.miragon.BpmnModeler
+```
+
+## Update
+
+Update the bpmn modeler with:
+
+```bash
+flatpak update --user io.miragon.BpmnModeler
+```
 
 ## Publication model
 
