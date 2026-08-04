@@ -103,6 +103,19 @@ publish_release "$first_release" "$first_bundle"
 [[ -f "$site_dir/io.miragon.BpmnModeler.flatpakref" ]]
 [[ -f "$site_dir/miragon.flatpakrepo" ]]
 [[ "$(jq -r '.tag' "$site_dir/release.json")" == "vscode-v9.9.9" ]]
+grep -Fxq \
+    "  <pre><code>flatpak remote-add --user --if-not-exists miragon https://miragon.github.io/bpmn-modeler-flatpak-repo/miragon.flatpakrepo" \
+    "$site_dir/index.html"
+grep -Fxq "flatpak install --user miragon $APP_ID</code></pre>" \
+    "$site_dir/index.html"
+grep -Fxq \
+    "  <pre><code>sudo flatpak remote-add --user --if-not-exists miragon https://miragon.github.io/bpmn-modeler-flatpak-repo/miragon.flatpakrepo" \
+    "$site_dir/index.html"
+grep -Fxq "sudo flatpak install --user miragon $APP_ID</code></pre>" \
+    "$site_dir/index.html"
+grep -Fxq "  <pre><code>flatpak run $APP_ID</code></pre>" "$site_dir/index.html"
+grep -Fxq "  <pre><code>flatpak update --user $APP_ID</code></pre>" \
+    "$site_dir/index.html"
 [[ "$(jq -r '.publisher_revision' "$site_dir/release.json")" \
     == "$("$REPO_ROOT/scripts/publisher-revision.sh" "$fingerprint")" ]]
 [[ "$(jq -r '.signing_key_fingerprint' "$site_dir/release.json")" \

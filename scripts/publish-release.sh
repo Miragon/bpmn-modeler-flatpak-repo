@@ -244,8 +244,19 @@ cat > "$site_dir/index.html" <<EOF
   <h1>Miragon Flatpak Repository</h1>
   <p>Official stable x86_64 package for Miragon BPMN Modeler, currently <strong>${tag#vscode-v}</strong>.</p>
   <h2>Install</h2>
-  <pre><code>flatpak install --user $base_url/$APP_ID.flatpakref</code></pre>
+  <p>Install the bpmn modeler in the user space with:</p>
+  <pre><code>flatpak remote-add --user --if-not-exists miragon $base_url/miragon.flatpakrepo
+
+flatpak install --user miragon $APP_ID</code></pre>
+  <p>Alternatively, install the bpmn modeler globally with:</p>
+  <pre><code>sudo flatpak remote-add --user --if-not-exists miragon $base_url/miragon.flatpakrepo
+
+sudo flatpak install --user miragon $APP_ID</code></pre>
+  <h2>Run</h2>
+  <p>Run the bpmn modeler with:</p>
+  <pre><code>flatpak run $APP_ID</code></pre>
   <h2>Update</h2>
+  <p>Update the bpmn modeler with:</p>
   <pre><code>flatpak update --user $APP_ID</code></pre>
   <p><a href="$APP_ID.flatpakref">Flatpak reference</a> | <a href="miragon.flatpakrepo">Repository descriptor</a> | <a href="$release_url">Source release</a></p>
 </body>
