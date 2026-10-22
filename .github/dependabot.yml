@@ -13,9 +13,6 @@ updates:
       include: 'scope'
     cooldown:
       default-days: 5
-      semver-major-days: 14
-      semver-minor-days: 5
-      semver-patch-days: 3
     groups:
       github-actions-minor-patch:
         applies-to: version-updates
